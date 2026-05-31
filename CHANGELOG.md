@@ -38,6 +38,25 @@ as the sole owner of their own account and sees identical data.
 - **The signup trigger (`handle_new_user`) now also creates a
   personal account** and links the new profile to it as `owner`.
 
+### Added
+
+- **Account & member management API** — server-side endpoints
+  for the upcoming Members tab UI. All routes are role-gated and
+  return Supabase-RLS-scoped data.
+  - `GET /api/account` — caller's account + role. Any member.
+  - `PATCH /api/account` — rename the account. Admin+.
+  - `GET /api/account/members` — list members. Email visible to
+    admin+ only; agents/viewers see name + avatar + role +
+    joined date.
+  - `PATCH /api/account/members/[userId]` — change a member's
+    role. Admin+. Owner promotion/demotion goes through the
+    transfer endpoint instead.
+  - `DELETE /api/account/members/[userId]` — remove a member.
+    Admin+. The removed user keeps their login and is moved to a
+    freshly-created personal account (mirror of the signup flow).
+  - `POST /api/account/transfer-ownership` — owner only. Atomic
+    swap with the named member.
+
 ### Migration required
 
 Apply against your Supabase project before deploying this version:
@@ -50,6 +69,13 @@ Apply against your Supabase project before deploying this version:
   every existing user is mapped to a freshly-created account
   with role `owner` and every existing row of theirs is linked
   to that account.
+- `supabase/migrations/018_account_member_rpcs.sql` — adds three
+  `SECURITY DEFINER` RPCs (`set_member_role`,
+  `remove_account_member`, `transfer_account_ownership`) that
+  back the member-management API. They self-check the caller's
+  role and raise SQLSTATE `42501` / `22023` on forbidden / bad
+  input so the API layer can map cleanly to 403 / 400.
+  Idempotent.
 
 ## [0.2.2] — 2026-05-29
 
