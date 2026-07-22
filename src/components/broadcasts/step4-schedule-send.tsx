@@ -14,7 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, Users, Save, CalendarClock } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 interface AudienceConfig {
@@ -33,6 +33,22 @@ interface Step4Props {
   onBack: () => void;
   isProcessing: boolean;
   progress: number;
+  /** ISO string when the send is queued, null for send-now. */
+  scheduledAt: string | null;
+  onScheduledAtChange: (value: string | null) => void;
+}
+
+/**
+ * `datetime-local` speaks the browser's local wall clock with no zone,
+ * so both directions have to go through the local-time getters rather
+ * than toISOString(), which would shift the value by the UTC offset.
+ */
+function toLocalInputValue(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
 }
 
 export function Step4ScheduleSend({
@@ -45,9 +61,13 @@ export function Step4ScheduleSend({
   onBack,
   isProcessing,
   progress,
+  scheduledAt,
+  onScheduledAtChange,
 }: Step4Props) {
   const t = useTranslations('Broadcasts.wizard');
   const [showConfirm, setShowConfirm] = useState(false);
+  // Guards the case where the picker sat open past the chosen time.
+  const isPastSchedule = !!scheduledAt && new Date(scheduledAt) <= new Date();
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
 
@@ -110,6 +130,73 @@ export function Step4ScheduleSend({
           placeholder={t('scheduleSend.broadcastNamePlaceholder')}
           className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
         />
+      </div>
+
+      {/* Send now vs schedule */}
+      <div className="rounded-xl border border-border bg-card/50 p-4">
+        <p className="mb-3 text-sm font-medium text-foreground">When to send</p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={scheduledAt ? 'outline' : 'default'}
+            size="sm"
+            onClick={() => onScheduledAtChange(null)}
+            disabled={isProcessing}
+            className={scheduledAt ? 'border-border text-muted-foreground' : ''}
+          >
+            <Send className="h-3.5 w-3.5" />
+            Send now
+          </Button>
+          <Button
+            type="button"
+            variant={scheduledAt ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => {
+              if (scheduledAt) return;
+              // Seed an hour out, rounded to the next 5 minutes — a
+              // sensible default that is always safely in the future.
+              const seed = new Date(Date.now() + 60 * 60 * 1000);
+              seed.setMinutes(Math.ceil(seed.getMinutes() / 5) * 5, 0, 0);
+              onScheduledAtChange(seed.toISOString());
+            }}
+            disabled={isProcessing}
+            className={scheduledAt ? '' : 'border-border text-muted-foreground'}
+          >
+            <CalendarClock className="h-3.5 w-3.5" />
+            Schedule
+          </Button>
+        </div>
+
+        {scheduledAt && (
+          <div className="mt-3 space-y-1.5">
+            <label
+              htmlFor="broadcast-schedule"
+              className="block text-sm font-medium text-foreground"
+            >
+              Send at
+            </label>
+            <Input
+              id="broadcast-schedule"
+              type="datetime-local"
+              value={toLocalInputValue(scheduledAt)}
+              min={toLocalInputValue(new Date(Date.now() + 60_000).toISOString())}
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (!raw) return;
+                const parsed = new Date(raw);
+                if (Number.isNaN(parsed.getTime())) return;
+                onScheduledAtChange(parsed.toISOString());
+              }}
+              disabled={isProcessing}
+              className="w-full border-border bg-muted text-foreground sm:w-64"
+            />
+            <p className="text-xs text-muted-foreground">
+              {isPastSchedule
+                ? 'That time has already passed — pick a future time or choose Send now.'
+                : `Queued for ${new Date(scheduledAt).toLocaleString()} (your local time).`}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Summary Card */}
@@ -191,23 +278,58 @@ export function Step4ScheduleSend({
           <DialogTrigger
             render={
               <Button
-                disabled={!name.trim() || isProcessing}
+                disabled={!name.trim() || isProcessing || isPastSchedule}
                 className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               />
             }
           >
-            <Send className="h-4 w-4" />
-            {t('scheduleSend.sendNow')}
+            {scheduledAt ? (
+              <>
+                <CalendarClock className="h-4 w-4" />
+                Schedule broadcast
+              </>
+            ) : (
+              <>
+                <Send className="h-4 w-4" />
+                {t('scheduleSend.sendNow')}
+              </>
+            )}
           </DialogTrigger>
           <DialogContent className="border-border bg-popover sm:max-w-md">
             <DialogHeader>
-              <DialogTitle className="text-popover-foreground">Confirm Broadcast</DialogTitle>
+              <DialogTitle className="text-popover-foreground">
+                {scheduledAt ? 'Schedule Broadcast' : 'Confirm Broadcast'}
+              </DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                You are about to send this broadcast to{' '}
-                <span className="font-medium text-popover-foreground">{estimatedReach.toLocaleString()}</span>{' '}
-                contacts using the{' '}
-                <span className="font-medium text-popover-foreground">{template.name}</span> template.
-                This action cannot be undone.
+                {scheduledAt ? (
+                  <>
+                    This broadcast will be sent to{' '}
+                    <span className="font-medium text-popover-foreground">
+                      {estimatedReach.toLocaleString()}
+                    </span>{' '}
+                    contacts using the{' '}
+                    <span className="font-medium text-popover-foreground">
+                      {template.name}
+                    </span>{' '}
+                    template on{' '}
+                    <span className="font-medium text-popover-foreground">
+                      {new Date(scheduledAt).toLocaleString()}
+                    </span>
+                    . You can cancel it any time before then.
+                  </>
+                ) : (
+                  <>
+                    You are about to send this broadcast to{' '}
+                    <span className="font-medium text-popover-foreground">
+                      {estimatedReach.toLocaleString()}
+                    </span>{' '}
+                    contacts using the{' '}
+                    <span className="font-medium text-popover-foreground">
+                      {template.name}
+                    </span>{' '}
+                    template. This action cannot be undone.
+                  </>
+                )}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -225,8 +347,17 @@ export function Step4ScheduleSend({
                 }}
                 className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
-                <Send className="h-4 w-4" />
-                {t('scheduleSend.sendNow')}
+                {scheduledAt ? (
+                  <>
+                    <CalendarClock className="h-4 w-4" />
+                    Schedule
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    {t('scheduleSend.sendNow')}
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

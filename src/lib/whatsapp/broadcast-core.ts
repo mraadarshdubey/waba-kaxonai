@@ -54,6 +54,13 @@ export interface CreateBroadcastParams {
   templateName: string;
   templateLanguage?: string | null;
   recipients: BroadcastRecipientInput[];
+  /**
+   * ISO timestamp to send at. When set to a future time the broadcast
+   * is persisted as 'scheduled' and NOT delivered — the cron drain
+   * picks it up. A past/absent value sends immediately, which is the
+   * historic behaviour.
+   */
+  scheduledAt?: string | null;
 }
 
 interface PlannedRecipient {
@@ -72,9 +79,59 @@ export interface BroadcastPlan {
   planned: PlannedRecipient[];
   /** Phones rejected up front (invalid E.164) — counted as failed. */
   rejected: number;
+  /**
+   * True when the broadcast was queued for a future time instead of
+   * sent. Callers MUST NOT pass a scheduled plan to
+   * {@link deliverBroadcast} — the cron drain owns delivery.
+   */
+  scheduled: boolean;
+  /** The persisted send time, when `scheduled`. */
+  scheduledAt: string | null;
+}
+
+/**
+ * Resolve a caller-supplied schedule to a send time.
+ *
+ * Returns null for "send now" — which includes an absent value and,
+ * deliberately, a time that has already passed: a client whose clock
+ * is a few seconds slow should not have its broadcast silently parked
+ * until the next cron tick.
+ *
+ * Throws on an unparseable string so a typo surfaces as a 400 rather
+ * than turning into an immediate send the operator did not intend.
+ */
+export function resolveScheduledAt(
+  raw: string | null | undefined,
+  now: Date = new Date()
+): string | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const at = new Date(raw);
+  if (Number.isNaN(at.getTime())) {
+    throw new BroadcastError(
+      'bad_request',
+      "'scheduled_at' is not a valid ISO timestamp",
+      400
+    );
+  }
+  if (at.getTime() <= now.getTime()) return null;
+  // Meta template sends have no ceiling, but a decade-out schedule is
+  // a data-entry error, not an intent. Mirrors the 2-month horizon
+  // competitors expose, with headroom.
+  const maxAhead = now.getTime() + MAX_SCHEDULE_AHEAD_MS;
+  if (at.getTime() > maxAhead) {
+    throw new BroadcastError(
+      'bad_request',
+      `'scheduled_at' cannot be more than ${MAX_SCHEDULE_AHEAD_DAYS} days ahead`,
+      400
+    );
+  }
+  return at.toISOString();
 }
 
 const MAX_RECIPIENTS = 1000;
+
+export const MAX_SCHEDULE_AHEAD_DAYS = 180;
+const MAX_SCHEDULE_AHEAD_MS = MAX_SCHEDULE_AHEAD_DAYS * 24 * 60 * 60 * 1000;
 
 /**
  * Validate + persist a broadcast, resolving each recipient to a
@@ -90,6 +147,9 @@ export async function createBroadcast(
 ): Promise<BroadcastPlan> {
   const { name, templateName, recipients } = params;
   const templateLanguage = params.templateLanguage || 'en_US';
+  // Validated before any write so a bad timestamp fails the request
+  // rather than leaving a half-built broadcast behind.
+  const scheduledAt = resolveScheduledAt(params.scheduledAt);
 
   if (!templateName) {
     throw new BroadcastError('bad_request', "'template_name' is required", 400);
@@ -201,7 +261,10 @@ export async function createBroadcast(
       name: name || `API broadcast (${templateName})`,
       template_name: templateName,
       template_language: templateLanguage,
-      status: 'sending',
+      // A future send is parked as 'scheduled' for the cron drain to
+      // claim; everything else goes straight to 'sending' as before.
+      status: scheduledAt ? 'scheduled' : 'sending',
+      scheduled_at: scheduledAt,
       total_recipients: deduped.length,
     })
     .select('id')
@@ -218,6 +281,9 @@ export async function createBroadcast(
         broadcast_id: broadcast.id,
         contact_id: r.contactId,
         status: 'pending' as const,
+        // Persisted so a scheduled send can rebuild its plan later,
+        // and so every send has an audit trail of what was substituted.
+        template_params: r.params,
       }))
     )
     .select('id, contact_id');
@@ -243,6 +309,8 @@ export async function createBroadcast(
     templateRow,
     planned,
     rejected,
+    scheduled: scheduledAt !== null,
+    scheduledAt,
   };
 }
 

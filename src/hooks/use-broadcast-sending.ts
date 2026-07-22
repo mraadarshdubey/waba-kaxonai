@@ -46,6 +46,13 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
+  /**
+   * ISO timestamp to send at. When set to a future time the broadcast
+   * is persisted as 'scheduled' with its per-recipient variables
+   * already resolved, and the send loop is skipped — the cron drain
+   * (`/api/broadcasts/cron`) delivers it. Null/absent sends now.
+   */
+  scheduledAt?: string | null;
 }
 
 interface UseBroadcastSendingReturn {
@@ -351,6 +358,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         throw new Error('No contacts found for this audience.');
       }
 
+      // A future send is queued for the cron drain instead of being
+      // fanned out here. Resolved once so the status, the recipient
+      // rows, and the early return below all agree.
+      const scheduledAt =
+        payload.scheduledAt && new Date(payload.scheduledAt) > new Date()
+          ? new Date(payload.scheduledAt).toISOString()
+          : null;
+
       // ── Step 2: Create broadcast row ──────────────────────────────
       setProgress(10);
       const { data: broadcast, error: broadcastError } = await supabase
@@ -368,7 +383,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             customField: payload.audience.customField,
             excludeTagIds: payload.audience.excludeTagIds,
           },
-          status: 'sending',
+          status: scheduledAt ? 'scheduled' : 'sending',
+          scheduled_at: scheduledAt,
           total_recipients: contacts.length,
           sent_count: 0,
           delivered_count: 0,
@@ -386,11 +402,27 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       }
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
+      // Variables are resolved here rather than only inside the send
+      // loop so that (a) a scheduled broadcast can be rebuilt from the
+      // database days later without the wizard's in-memory mapping, and
+      // (b) every broadcast keeps an audit trail of exactly what was
+      // substituted for each recipient.
+      setProgress(15);
+      const resolvedValues = await fetchCustomValueIndex(
+        supabase,
+        contacts.map((c) => c.id),
+      );
+
       setProgress(20);
       const recipientRows = contacts.map((contact) => ({
         broadcast_id: broadcast.id,
         contact_id: contact.id,
         status: 'pending' as const,
+        template_params: resolveVariables(
+          payload.variables,
+          contact,
+          resolvedValues.get(contact.id),
+        ),
       }));
 
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
@@ -415,6 +447,16 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`,
           );
         }
+      }
+
+      // ── Scheduled: queued, not sent ───────────────────────────────
+      // Everything the drain needs is now persisted (status, send time,
+      // recipient rows with resolved params). Returning here is what
+      // makes the schedule a schedule — falling through would send
+      // immediately and the queued time would be decorative.
+      if (scheduledAt) {
+        setProgress(100);
+        return broadcast.id;
       }
 
       // ── Step 4: Fetch recipients (joined contact) + preload custom values

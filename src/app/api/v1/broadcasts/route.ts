@@ -72,17 +72,24 @@ export async function POST(request: Request) {
         to: typeof r?.to === 'string' ? r.to : '',
         params: Array.isArray(r?.params) ? r.params : undefined,
       })),
+      scheduledAt:
+        typeof body.scheduled_at === 'string' ? body.scheduled_at : null,
     });
 
-    // Fan out after the response is sent. Uses the same service-role
-    // client — no request-scoped auth needed for the Meta calls or
-    // the account-scoped row updates.
-    after(() => deliverBroadcast(ctx.supabase, plan));
+    // A scheduled broadcast is owned by the cron drain — delivering it
+    // here would send it immediately and defeat the schedule.
+    if (!plan.scheduled) {
+      // Fan out after the response is sent. Uses the same service-role
+      // client — no request-scoped auth needed for the Meta calls or
+      // the account-scoped row updates.
+      after(() => deliverBroadcast(ctx.supabase, plan));
+    }
 
     return ok(
       {
         broadcast_id: plan.broadcastId,
-        status: 'sending',
+        status: plan.scheduled ? 'scheduled' : 'sending',
+        scheduled_at: plan.scheduledAt,
         total_recipients: plan.planned.length,
         accepted: plan.planned.length,
         rejected: plan.rejected,

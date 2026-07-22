@@ -45,6 +45,12 @@ export const broadcastStatusConfig: Record<BroadcastStatus, StatusDisplay> = {
     label: "failed",
     classes: "bg-red-500/10 text-red-400 border-red-500/20",
   },
+  // Neutral rather than red: the operator chose this, it isn't a
+  // failure. Matches `draft`, the other "nothing was sent" state.
+  cancelled: {
+    label: "cancelled",
+    classes: "bg-slate-500/10 text-muted-foreground border-slate-500/20",
+  },
 };
 
 export const recipientStatusConfig: Record<RecipientStatus, StatusDisplay> = {

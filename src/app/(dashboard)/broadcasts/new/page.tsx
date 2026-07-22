@@ -45,6 +45,8 @@ export default function NewBroadcastPage() {
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
+  /** null = send immediately; an ISO string queues it for the cron drain. */
+  const [scheduledAt, setScheduledAt] = useState<string | null>(null);
 
   async function handleSend() {
     if (!template) return;
@@ -62,7 +64,13 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        scheduledAt,
       });
+      if (scheduledAt) {
+        toast.success(
+          `Broadcast scheduled for ${new Date(scheduledAt).toLocaleString()}`,
+        );
+      }
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
       // Previously swallowed with console.error — the wizard would
@@ -221,6 +229,8 @@ export default function NewBroadcastPage() {
               onNameChange={setName}
               template={template}
               audience={audience}
+              scheduledAt={scheduledAt}
+              onScheduledAtChange={setScheduledAt}
               onSend={handleSend}
               onSaveDraft={handleSaveDraft}
               onBack={() => setCurrentStep(2)}
