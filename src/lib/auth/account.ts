@@ -149,7 +149,7 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   // RLS, so it stays robust against cache staleness and older schemas.
   const { data: account, error: accountErr } = await supabase
     .from("accounts")
-    .select("id, name")
+    .select("id, name, status")
     .eq("id", data.account_id)
     .maybeSingle();
 
@@ -161,6 +161,20 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     // account_id points at no readable account row — orphaned profile
     // or an RLS gap. Same "can't scope this user" outcome as above.
     throw new ForbiddenError("Profile is not linked to an account");
+  }
+
+  // Account lifecycle gate (040). RLS already returns nothing for a
+  // non-active account, but API routes that write through the
+  // service-role client after a role check would sail past RLS — this
+  // is the one chokepoint every one of them shares, so enforce here.
+  // (`status` is absent pre-040; treat missing as active so a stack
+  // that hasn't run the migration behaves as before.)
+  const accountStatus = (account as { status?: string }).status;
+  if (accountStatus === "pending") {
+    throw new ForbiddenError("Account is awaiting approval");
+  }
+  if (accountStatus === "suspended") {
+    throw new ForbiddenError("Account is suspended");
   }
 
   return {
