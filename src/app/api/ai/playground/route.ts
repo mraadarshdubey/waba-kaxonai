@@ -8,8 +8,11 @@ import { buildSystemPrompt } from '@/lib/ai/defaults'
 import { latestUserMessage } from '@/lib/ai/query'
 import { AiError, type ChatMessage } from '@/lib/ai/types'
 
-// Keep the tested transcript bounded, mirroring the live context window.
-const MAX_TURNS = 20
+// Keep the tested transcript bounded. Deliberately larger than the live
+// auto-reply context (AI_CONTEXT_MESSAGE_LIMIT, default 20): the
+// playground is where operators compare models over a long back-and-
+// forth, so it remembers 40 messages before the oldest fall off.
+const MAX_TURNS = 40
 
 /**
  * POST /api/ai/playground  (agent+)

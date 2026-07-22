@@ -13,11 +13,69 @@ interface Turn {
   handoff?: boolean;
 }
 
+/**
+ * How many messages the playground remembers. Matches the server's
+ * MAX_TURNS in /api/ai/playground — anything beyond this would be
+ * silently dropped there anyway, so the client trims to the same
+ * bound and the "N/40" counter never lies.
+ */
+const MAX_MEMORY = 40;
+
+const STORAGE_KEY = 'waba-kaxon.playground.transcript';
+
+/** Last MAX_MEMORY turns from localStorage, [] on anything malformed. */
+function loadStoredTurns(): Turn[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (t): t is Turn =>
+          !!t &&
+          typeof t === 'object' &&
+          ((t as Turn).role === 'user' || (t as Turn).role === 'assistant') &&
+          typeof (t as Turn).content === 'string',
+      )
+      .slice(-MAX_MEMORY);
+  } catch {
+    return [];
+  }
+}
+
 export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Restore the transcript once on mount (not in useState's initializer
+  // — localStorage doesn't exist during SSR). This is what keeps a
+  // model-comparison session alive across the Setup tab and reloads:
+  // switch models, come back, and the conversation is still here.
+  useEffect(() => {
+    const stored = loadStoredTurns();
+    if (stored.length > 0) setTurns(stored);
+  }, []);
+
+  // Mirror every change back, trimmed to the memory window. Storage
+  // full/blocked (private mode) just means no persistence — never an
+  // error the user sees.
+  useEffect(() => {
+    try {
+      if (turns.length === 0) {
+        localStorage.removeItem(STORAGE_KEY);
+      } else {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify(turns.slice(-MAX_MEMORY)),
+        );
+      }
+    } catch {
+      /* best-effort */
+    }
+  }, [turns]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -27,7 +85,12 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
     const text = input.trim();
     if (!text || sending) return;
 
-    const next: Turn[] = [...turns, { role: 'user', content: text }];
+    // Trim as we go so the transcript, what's persisted, and what the
+    // server sees all share the same 40-message window.
+    const next: Turn[] = [
+      ...turns,
+      { role: 'user' as const, content: text },
+    ].slice(-MAX_MEMORY);
     setTurns(next);
     setInput('');
     setSending(true);
@@ -52,17 +115,19 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
         setInput(text);
         return;
       }
-      setTurns([
-        ...next,
-        {
-          role: 'assistant',
-          content:
-            typeof data.reply === 'string' && data.reply.trim()
-              ? data.reply
-              : '',
-          handoff: Boolean(data.handoff),
-        },
-      ]);
+      setTurns(
+        [
+          ...next,
+          {
+            role: 'assistant' as const,
+            content:
+              typeof data.reply === 'string' && data.reply.trim()
+                ? data.reply
+                : '',
+            handoff: Boolean(data.handoff),
+          },
+        ].slice(-MAX_MEMORY),
+      );
     } catch {
       toast.error("Couldn't reach the agent.");
       setTurns(turns);
@@ -90,6 +155,15 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
             — test replies as if you were a customer
           </span>
         </div>
+        <div className="flex items-center gap-1">
+          {turns.length > 0 && (
+            <span
+              className="text-xs tabular-nums text-muted-foreground"
+              title={`The agent remembers the last ${MAX_MEMORY} messages of this test chat — it survives tab switches and reloads. At ${MAX_MEMORY} the oldest fall off.`}
+            >
+              {turns.length}/{MAX_MEMORY} in memory
+            </span>
+          )}
         <Button
           variant="ghost"
           size="sm"
@@ -99,6 +173,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
         >
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Reset
         </Button>
+        </div>
       </div>
 
       {/* Transcript */}
