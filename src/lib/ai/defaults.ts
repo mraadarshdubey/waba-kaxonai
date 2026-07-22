@@ -21,6 +21,91 @@ export const AI_PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
   nvidia: 'meta/llama-3.3-70b-instruct',
 }
 
+export interface AiModelPreset {
+  /** Exact provider model ID sent on the wire. */
+  id: string
+  /** Short human label for the dropdown. */
+  label: string
+  /** One-line "why pick this" hint. */
+  hint: string
+}
+
+/**
+ * Curated per-provider model picks, shown as a dropdown in settings.
+ * Conversation-focused: everything here answers fast and handles
+ * multilingual customer chat; slow reasoning-first models are left out
+ * on purpose. NOT an allow-list — the UI keeps a "Custom model…"
+ * escape hatch because IDs churn fast and a BYO-key forker may want
+ * something newer than this file.
+ *
+ * NVIDIA IDs verified against docs.api.nvidia.com (NIM's published
+ * chat-completion catalog); all are served on build.nvidia.com's free
+ * tier with a personal nvapi key.
+ */
+export const AI_MODEL_PRESETS: Record<AiProvider, AiModelPreset[]> = {
+  openai: [
+    {
+      id: 'gpt-5.4-mini',
+      label: 'GPT-5.4 mini',
+      hint: 'Fast and cheap — right default for chat',
+    },
+    {
+      id: 'gpt-5.4',
+      label: 'GPT-5.4',
+      hint: 'Highest quality, slower and pricier',
+    },
+  ],
+  anthropic: [
+    {
+      id: 'claude-haiku-4-5-20251001',
+      label: 'Claude Haiku 4.5',
+      hint: 'Fast and cheap — right default for chat',
+    },
+    {
+      id: 'claude-sonnet-5',
+      label: 'Claude Sonnet 5',
+      hint: 'Highest quality, slower and pricier',
+    },
+  ],
+  nvidia: [
+    {
+      id: 'meta/llama-3.3-70b-instruct',
+      label: 'Llama 3.3 70B',
+      hint: 'Best overall free pick — strong Hindi/Hinglish chat',
+    },
+    {
+      id: 'meta/llama-4-maverick-17b-128e-instruct',
+      label: 'Llama 4 Maverick',
+      hint: 'Newest Meta flagship — MoE, fast for its quality',
+    },
+    {
+      id: 'meta/llama-4-scout-17b-16e-instruct',
+      label: 'Llama 4 Scout',
+      hint: 'Lighter Llama 4 — quicker responses',
+    },
+    {
+      id: 'qwen/qwen3-next-80b-a3b-instruct',
+      label: 'Qwen3 Next 80B',
+      hint: 'Very fast MoE (3B active) — excellent multilingual',
+    },
+    {
+      id: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+      label: 'Nemotron Super 49B',
+      hint: 'NVIDIA-tuned instruction following',
+    },
+    {
+      id: 'meta/llama-3.1-8b-instruct',
+      label: 'Llama 3.1 8B',
+      hint: 'Fastest — fine for simple FAQs, weakest on nuance',
+    },
+    {
+      id: 'mistralai/mistral-nemotron',
+      label: 'Mistral Nemotron',
+      hint: 'Fast European alternative',
+    },
+  ],
+}
+
 /**
  * Sentinel the model is instructed to emit (in auto-reply mode) when it
  * can't confidently help and a human should take over. Parsed and

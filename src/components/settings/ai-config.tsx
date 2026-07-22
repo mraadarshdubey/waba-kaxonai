@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/select';
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
-import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
+import { AI_MODEL_PRESETS, AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
 import type { AiProvider } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
@@ -37,6 +37,10 @@ const MASKED_KEY = '••••••••••••••••';
 // Radix Select can't use an empty-string item value, so the "leave
 // unassigned" choice gets a sentinel that maps to null in the payload.
 const HANDOFF_QUEUE = '__queue__';
+
+// Sentinel for the model picker's "Custom model…" row — never sent to
+// the API; it just toggles the free-text input.
+const CUSTOM_MODEL = '__custom__';
 
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
@@ -63,6 +67,9 @@ export function AiConfig() {
   const [configured, setConfigured] = useState(false);
   const [provider, setProvider] = useState<AiProvider>('openai');
   const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
+  // True when the model isn't one of the curated presets — shows the
+  // free-text input under the picker.
+  const [customModel, setCustomModel] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -97,6 +104,12 @@ export function AiConfig() {
         setConfigured(true);
         setProvider(data.provider);
         setModel(data.model);
+        // A saved model outside the curated list renders as Custom.
+        setCustomModel(
+          !AI_MODEL_PRESETS[data.provider as AiProvider]?.some(
+            (p) => p.id === data.model,
+          ),
+        );
         setSystemPrompt(data.system_prompt ?? '');
         setIsActive(data.is_active);
         setAutoReplyEnabled(data.auto_reply_enabled);
@@ -130,12 +143,16 @@ export function AiConfig() {
   // typed a custom model.
   const handleProviderChange = (next: AiProvider) => {
     setProvider(next);
-    const isDefaultModel =
-      model === AI_PROVIDER_DEFAULT_MODEL.openai ||
-      model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
-      model === AI_PROVIDER_DEFAULT_MODEL.nvidia ||
-      model.trim() === '';
-    if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
+    // A preset of the OLD provider makes no sense on the new one —
+    // swap to the new provider's default. A hand-typed custom model is
+    // left alone (the operator may be pointing both at a proxy).
+    const wasPreset =
+      model.trim() === '' ||
+      AI_MODEL_PRESETS[provider].some((p) => p.id === model);
+    if (!customModel || wasPreset) {
+      setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
+      setCustomModel(false);
+    }
   };
 
   const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
@@ -291,13 +308,45 @@ export function AiConfig() {
 
               <div className="space-y-2">
                 <Label htmlFor="ai-model">{t('model')}</Label>
-                <Input
-                  id="ai-model"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
+                <Select
+                  value={customModel ? CUSTOM_MODEL : model}
+                  onValueChange={(v) => {
+                    if (!v) return;
+                    if (v === CUSTOM_MODEL) {
+                      setCustomModel(true);
+                      return;
+                    }
+                    setCustomModel(false);
+                    setModel(v);
+                  }}
                   disabled={disabled}
-                />
+                >
+                  <SelectTrigger id="ai-model">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-80">
+                    {AI_MODEL_PRESETS[provider].map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        <span className="flex flex-col">
+                          <span>{p.label}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {p.hint}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_MODEL}>Custom model…</SelectItem>
+                  </SelectContent>
+                </Select>
+                {customModel ? (
+                  <Input
+                    aria-label="Custom model ID"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
+                    disabled={disabled}
+                  />
+                ) : null}
               </div>
             </div>
 
