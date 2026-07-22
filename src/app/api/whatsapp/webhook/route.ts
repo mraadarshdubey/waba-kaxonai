@@ -9,6 +9,9 @@ import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { loadBusinessHours } from '@/lib/business-hours/config'
+import { isOpenAt } from '@/lib/business-hours/schedule'
+import { dispatchAwayMessage } from '@/lib/business-hours/away'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -748,6 +751,14 @@ async function processMessage(
   })
   const flowConsumed = flowResult.consumed
 
+  // Business hours. Loaded once and reused by the three gates below.
+  // `loadBusinessHours` never throws and returns "always open" for an
+  // account that has not configured it, so an unconfigured install
+  // behaves exactly as it did before this feature existed.
+  const businessHours = await loadBusinessHours(supabaseAdmin(), accountId)
+  const outsideHours =
+    businessHours.enabled && !isOpenAt(businessHours, new Date())
+
   // Fire any automations that react to this webhook event. All dispatches
   // run here (not earlier) so the contact, conversation, and inbound
   // message all exist before any step — including send_message — runs.
@@ -781,6 +792,13 @@ async function processMessage(
   // listens to only one trigger runs only when that trigger matches.
   if (contactOutcome.wasCreated) automationTriggers.unshift('new_contact_created')
   if (isFirstInboundMessage) automationTriggers.unshift('first_inbound_message')
+  // Opt-in: hold automations while the account is closed so a bot does
+  // not answer at 3am in the team's voice. Off by default — enabling
+  // business hours must not silently disable automation an operator
+  // already depends on.
+  if (outsideHours && businessHours.pauseAutomations) {
+    automationTriggers.length = 0
+  }
   for (const triggerType of automationTriggers) {
     runAutomationsForTrigger({
       accountId,
@@ -801,12 +819,32 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
+  if (
+    !flowConsumed &&
+    !interactiveReplyId &&
+    inboundText.trim() &&
+    !(outsideHours && businessHours.pauseAiAutoreply)
+  ) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,
+    })
+  }
+
+  // Out-of-hours auto-reply. Skipped when a Flow already answered —
+  // the customer got a response, so "we're closed" would just be noise.
+  // Owns its own throttle claim and never throws.
+  if (!flowConsumed) {
+    await dispatchAwayMessage({
+      db: supabaseAdmin(),
+      settings: businessHours,
+      accountId,
+      userId: configOwnerUserId,
+      conversationId: conversation.id,
+      contactId: contactRecord.id,
+      contactName: contactRecord.name ?? contactName,
     })
   }
 
