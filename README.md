@@ -1,8 +1,12 @@
-# wacrm — CRM Template for WhatsApp
+# waba-kaxon.ai — WhatsApp CRM
 
-> Self-hostable CRM template for WhatsApp® — shared inbox, contacts,
-> sales pipelines, broadcasts, and no-code automations. Fork it, brand
-> it, host it.
+> Self-hosted CRM for WhatsApp® — shared inbox, contacts, sales
+> pipelines, broadcasts with scheduling, business hours, and no-code
+> automations.
+>
+> Built on [ArnasDon/wacrm](https://github.com/ArnasDon/wacrm) (MIT).
+> Much of the documentation below still points at the upstream project;
+> it applies unchanged unless noted.
 
 <p align="center">
   <a href="https://www.hostinger.com/web-apps-hosting">

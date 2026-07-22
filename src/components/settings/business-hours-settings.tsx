@@ -239,7 +239,7 @@ export function BusinessHoursSettings() {
     <div>
       <SettingsPanelHead
         title="Business hours"
-        description="Tell customers when you're away. Outside these hours wacrm can auto-reply once per conversation, and optionally hold back automations so a bot doesn't answer in your team's voice at 3am."
+        description="Tell customers when you're away. Outside these hours waba-kaxon.ai can auto-reply once per conversation, and optionally hold back automations so a bot doesn't answer in your team's voice at 3am."
         action={
           <Button onClick={handleSave} disabled={disabled}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -268,7 +268,7 @@ export function BusinessHoursSettings() {
                     ? openNow === false && nextOpen
                       ? `Closed — reopens ${nextOpen}.`
                       : "Your schedule is active."
-                    : "Turned off: wacrm treats the account as always open."}
+                    : "Turned off: waba-kaxon.ai treats the account as always open."}
                 </CardDescription>
               </div>
               <Switch

@@ -91,7 +91,8 @@ function isHostAllowed(
   return allowList.includes(hostname.toLowerCase());
 }
 
-function getBaseUrl(request: Request): string {
+/** Null when no trustworthy origin could be determined — see below. */
+function getBaseUrl(request: Request): string | null {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
 
@@ -128,10 +129,17 @@ function getBaseUrl(request: Request): string {
     );
   } else {
     console.warn(
-      "[POST /api/account/invitations] could not derive base URL from request; falling back to marketing domain",
+      "[POST /api/account/invitations] could not derive a base URL from the request",
     );
   }
-  return "https://wacrm.tech";
+
+  // Upstream fell back to its own marketing domain here. In a fork
+  // that is actively wrong: the admin would hand a teammate an invite
+  // link pointing at somebody else's website, and the invite would
+  // look broken rather than obviously misconfigured. Refusing to mint
+  // a link is the honest outcome — the operator sets
+  // NEXT_PUBLIC_SITE_URL (or fixes their proxy) and retries.
+  return null;
 }
 
 const MAX_LABEL_LEN = 80;
@@ -237,12 +245,27 @@ export async function POST(request: Request) {
       );
     }
 
+    const baseUrl = getBaseUrl(request);
+    if (!baseUrl) {
+      // The invitation row exists and its token is valid — only the
+      // link could not be built. Say so precisely rather than
+      // reporting a generic failure the admin cannot act on.
+      return NextResponse.json(
+        {
+          error:
+            "Invitation created, but no invite link could be generated: this deployment has no NEXT_PUBLIC_SITE_URL and the request host was not usable. Set NEXT_PUBLIC_SITE_URL and try again.",
+          invitation: data,
+        },
+        { status: 500 },
+      );
+    }
+
     return NextResponse.json(
       {
         invitation: data,
         // Plaintext payload — visible to the admin exactly once.
         token,
-        url: inviteUrl(token, getBaseUrl(request)),
+        url: inviteUrl(token, baseUrl),
         expiresInDays: expiryDays,
       },
       { status: 201 },
