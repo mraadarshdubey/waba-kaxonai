@@ -535,20 +535,22 @@ function InboxPageInner() {
   );
 
   const handleAssignChange = useCallback(
-    (conversationId: string, assignedAgentId: string | null) => {
+    (
+      conversationId: string,
+      patch: { assigned_agent_id?: string | null; ai_assigned?: boolean },
+    ) => {
+      const apply = <T extends Conversation>(c: T): T => ({
+        ...c,
+        ...("assigned_agent_id" in patch
+          ? { assigned_agent_id: patch.assigned_agent_id ?? undefined }
+          : {}),
+        ...("ai_assigned" in patch ? { ai_assigned: patch.ai_assigned } : {}),
+      });
       setConversations((prev) =>
-        prev.map((c) =>
-          c.id === conversationId
-            ? { ...c, assigned_agent_id: assignedAgentId ?? undefined }
-            : c
-        )
+        prev.map((c) => (c.id === conversationId ? apply(c) : c))
       );
       if (activeConversation?.id === conversationId) {
-        setActiveConversation((prev) =>
-          prev
-            ? { ...prev, assigned_agent_id: assignedAgentId ?? undefined }
-            : prev
-        );
+        setActiveConversation((prev) => (prev ? apply(prev) : prev));
       }
     },
     [activeConversation]

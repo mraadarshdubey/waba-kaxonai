@@ -27,6 +27,7 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  Bot,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -75,7 +76,7 @@ interface MessageThreadProps {
   onStatusChange: (conversationId: string, status: ConversationStatus) => void;
   onAssignChange: (
     conversationId: string,
-    assignedAgentId: string | null,
+    patch: { assigned_agent_id?: string | null; ai_assigned?: boolean },
   ) => void;
   /**
    * On mobile, the thread is shown full-screen with the conversation list
@@ -822,9 +823,11 @@ export function MessageThread({
       if (!conversation) return;
 
       const supabase = createClient();
+      // Assigning to a human (or unassigning) always releases the AI —
+      // the two are mutually exclusive.
       const { error } = await supabase
         .from("conversations")
-        .update({ assigned_agent_id: agentId })
+        .update({ assigned_agent_id: agentId, ai_assigned: false })
         .eq("id", conversation.id);
 
       if (error) {
@@ -833,10 +836,44 @@ export function MessageThread({
         return;
       }
 
-      onAssignChange(conversation.id, agentId);
+      onAssignChange(conversation.id, {
+        assigned_agent_id: agentId,
+        ai_assigned: false,
+      });
     },
     [conversation, onAssignChange],
   );
+
+  // Assign the thread to the AI: it then owns the conversation and
+  // replies to every inbound 24/7 (no per-conversation cap). Clears any
+  // human assignment, un-pauses the bot, and resets the reply counter so
+  // it starts fresh. Still gated by the account-wide auto-reply switch.
+  const handleAssignToAi = useCallback(async () => {
+    if (!conversation) return;
+
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("conversations")
+      .update({
+        ai_assigned: true,
+        assigned_agent_id: null,
+        ai_autoreply_disabled: false,
+        ai_reply_count: 0,
+      })
+      .eq("id", conversation.id);
+
+    if (error) {
+      console.error("Failed to assign to AI:", error);
+      toast.error("Failed to assign to AI");
+      return;
+    }
+
+    onAssignChange(conversation.id, {
+      assigned_agent_id: null,
+      ai_assigned: true,
+    });
+    toast.success("AI is now handling this conversation");
+  }, [conversation, onAssignChange]);
 
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
@@ -863,10 +900,13 @@ export function MessageThread({
     (s) => s.value === conversation.status
   );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
+  const aiAssigned = conversation.ai_assigned ?? false;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
-  const assignLabel = assignedAgentId
-    ? (currentAssignee?.full_name ?? t("assigned"))
-    : t("assign");
+  const assignLabel = aiAssigned
+    ? "AI Assistant"
+    : assignedAgentId
+      ? (currentAssignee?.full_name ?? t("assigned"))
+      : t("assign");
 
   return (
     // `min-w-0` is load-bearing: the page already puts min-w-0 on the
@@ -995,10 +1035,14 @@ export function MessageThread({
             <DropdownMenuTrigger
               className={cn(
                 "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                assignedAgentId ? "text-primary" : "text-muted-foreground"
+                aiAssigned || assignedAgentId ? "text-primary" : "text-muted-foreground"
               )}
             >
-              <UserPlus className="h-3 w-3" />
+              {aiAssigned ? (
+                <Bot className="h-3 w-3" />
+              ) : (
+                <UserPlus className="h-3 w-3" />
+              )}
               <span className="hidden sm:inline">{assignLabel}</span>
               <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
@@ -1006,6 +1050,19 @@ export function MessageThread({
               align="end"
               className="border-border bg-popover"
             >
+              {/* AI Assistant — hand the whole thread to the bot 24/7. */}
+              <DropdownMenuItem
+                onClick={handleAssignToAi}
+                className={cn(
+                  "text-sm",
+                  aiAssigned ? "text-primary" : "text-popover-foreground",
+                )}
+              >
+                <Bot className="mr-2 h-3.5 w-3.5" />
+                <span className="flex-1">AI Assistant (24/7)</span>
+                {aiAssigned && <Check className="ml-2 h-3 w-3" />}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-border" />
               {profiles.length === 0 ? (
                 <DropdownMenuItem disabled className="text-sm text-muted-foreground">
                   {t("noTeammates")}
@@ -1041,7 +1098,7 @@ export function MessageThread({
                   );
                 })
               )}
-              {assignedAgentId && (
+              {(assignedAgentId || aiAssigned) && (
                 <>
                   <DropdownMenuSeparator className="bg-border" />
                   <DropdownMenuItem
@@ -1144,7 +1201,9 @@ export function MessageThread({
         currentUserId={user?.id}
         onChange={(patch) => {
           if ("assigned_agent_id" in patch) {
-            onAssignChange(conversation.id, patch.assigned_agent_id ?? null);
+            onAssignChange(conversation.id, {
+              assigned_agent_id: patch.assigned_agent_id ?? null,
+            });
           }
         }}
       />

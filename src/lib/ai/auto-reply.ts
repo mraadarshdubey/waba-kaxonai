@@ -69,15 +69,25 @@ export async function dispatchInboundToAiReply(
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
+      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count, ai_assigned')
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
-    // Cheap early-out; the authoritative cap check is the atomic claim
-    // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    // When the thread is explicitly assigned to the AI, it owns the
+    // conversation 24/7 and the per-conversation cap does not apply —
+    // it answers every inbound. The account master switch and the
+    // shared-key rate limit below still bound it. Otherwise the cap is
+    // the guardrail that stops the bot after N tries and waits for a
+    // human. (Cheap early-out; the atomic claim below is authoritative
+    // for the non-assigned path and races a concurrent inbound.)
+    if (
+      !conv.ai_assigned &&
+      conv.ai_reply_count >= config.autoReplyMaxPerConversation
+    ) {
+      return
+    }
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
@@ -132,7 +142,14 @@ export async function dispatchInboundToAiReply(
       usage,
     })
 
-    if (handoff || !text) {
+    // A thread explicitly assigned to the AI is meant to be owned by
+    // the bot 24/7, so we do NOT let a handoff pause it or route it to a
+    // human. If the model still produced usable text (the sentinel is
+    // already stripped), send it; if it produced nothing, skip this turn
+    // and stay owning the thread — the next inbound gets another try.
+    if (conv.ai_assigned) {
+      if (!text) return
+    } else if (handoff || !text) {
       // The model can't (or shouldn't) answer — stop auto-replying on
       // this thread and hand it to a human. We (a) pause the bot here
       // (sticky until re-enabled), (b) route the conversation to the
@@ -162,11 +179,18 @@ export async function dispatchInboundToAiReply(
     // another inbound just took the last slot, `claimed` is false and we
     // skip the send. (We consume a slot slightly before the send lands —
     // fail-safe: under-reply rather than over-reply.)
+    // An AI-owned thread has no ceiling — pass an effectively unbounded
+    // cap so the atomic claim always succeeds while still incrementing
+    // the counter (kept for reporting) and preserving the concurrency
+    // guarantee. Well under int4 max; no real thread approaches it.
+    const AI_ASSIGNED_UNCAPPED = 1_000_000_000
     const { data: claimed, error: claimErr } = await db.rpc(
       'claim_ai_reply_slot',
       {
         conversation_id: conversationId,
-        max_replies: config.autoReplyMaxPerConversation,
+        max_replies: conv.ai_assigned
+          ? AI_ASSIGNED_UNCAPPED
+          : config.autoReplyMaxPerConversation,
       },
     )
     if (claimErr) {

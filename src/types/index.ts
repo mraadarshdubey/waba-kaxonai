@@ -181,6 +181,13 @@ export interface Conversation {
   ai_autoreply_disabled?: boolean;
   ai_reply_count?: number;
   ai_handoff_summary?: string | null;
+  /**
+   * `ai_assigned` (migration 043) — the AI owns this thread and replies
+   * to every inbound with no per-conversation cap. Mutually exclusive
+   * with `assigned_agent_id`; still gated by the account master switch
+   * and rate limit.
+   */
+  ai_assigned?: boolean;
 }
 
 // ============================================================
