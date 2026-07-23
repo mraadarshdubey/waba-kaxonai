@@ -131,6 +131,60 @@ describe('validateInteractivePayload — list', () => {
   })
 })
 
+describe('validateInteractivePayload — cta_url', () => {
+  const validCta = {
+    kind: 'cta_url' as const,
+    body: 'Check out our bootcamp',
+    display_text: 'Visit Website',
+    url: 'https://example.com',
+  }
+
+  it('accepts a well-formed link button', () => {
+    expect(validateInteractivePayload(validCta).ok).toBe(true)
+  })
+
+  it('accepts an optional header and footer', () => {
+    const res = validateInteractivePayload({
+      ...validCta,
+      header: 'Offer',
+      footer: 'Limited time',
+    })
+    expect(res.ok).toBe(true)
+  })
+
+  it('still requires body text', () => {
+    expect(validateInteractivePayload({ ...validCta, body: '  ' }).ok).toBe(false)
+  })
+
+  it('rejects a missing button label', () => {
+    expect(validateInteractivePayload({ ...validCta, display_text: '' }).ok).toBe(false)
+  })
+
+  it('rejects a label past the 20-char cap', () => {
+    const res = validateInteractivePayload({
+      ...validCta,
+      display_text: 'x'.repeat(21),
+    })
+    expect(res.ok).toBe(false)
+  })
+
+  it('rejects a malformed URL', () => {
+    expect(validateInteractivePayload({ ...validCta, url: 'nope' }).ok).toBe(false)
+  })
+
+  it('rejects non-web protocols', () => {
+    expect(
+      validateInteractivePayload({ ...validCta, url: 'mailto:a@b.com' }).ok,
+    ).toBe(false)
+  })
+
+  it('rejects an unknown kind', () => {
+    expect(validateInteractivePayload({ ...validCta, kind: 'carousel' }).ok).toBe(
+      false,
+    )
+  })
+})
+
 describe('interactivePayloadPreviewText', () => {
   it('returns the trimmed body', () => {
     expect(interactivePayloadPreviewText({ ...validButtons, body: '  Hi  ' })).toBe('Hi')
@@ -138,5 +192,13 @@ describe('interactivePayloadPreviewText', () => {
   it('falls back when body is blank', () => {
     expect(interactivePayloadPreviewText({ ...validButtons, body: '   ' })).toBe('[buttons]')
     expect(interactivePayloadPreviewText({ ...validList, body: '' })).toBe('[list]')
+    expect(
+      interactivePayloadPreviewText({
+        kind: 'cta_url',
+        body: '',
+        display_text: 'Go',
+        url: 'https://a.com',
+      }),
+    ).toBe('[link button]')
   })
 })

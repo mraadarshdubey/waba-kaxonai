@@ -3,6 +3,7 @@ import {
   INTERACTIVE_LIMITS,
   sendInteractiveButtons,
   sendInteractiveList,
+  sendInteractiveCtaUrl,
 } from "./meta-api";
 
 // All assertions in this file run BEFORE the network call. We stub fetch
@@ -265,5 +266,100 @@ describe("sendInteractiveList — validation", () => {
         },
       },
     });
+  });
+});
+
+describe("sendInteractiveCtaUrl", () => {
+  const CTA = {
+    ...BASE_ARGS,
+    displayText: "Visit Website",
+    url: "https://example.com/offer",
+  };
+
+  describe("validation (pre-network)", () => {
+    beforeEach(() => {
+      vi.stubGlobal("fetch", vi.fn(neverFetch));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("requires a button label", async () => {
+      await expect(
+        sendInteractiveCtaUrl({ ...CTA, displayText: "  " }),
+      ).rejects.toThrow(/label/i);
+    });
+
+    it("caps the button label at Meta's limit", async () => {
+      await expect(
+        sendInteractiveCtaUrl({
+          ...CTA,
+          displayText: "x".repeat(INTERACTIVE_LIMITS.buttonTitleMaxLength + 1),
+        }),
+      ).rejects.toThrow(/exceeds/i);
+    });
+
+    it("requires a URL", async () => {
+      await expect(
+        sendInteractiveCtaUrl({ ...CTA, url: "" }),
+      ).rejects.toThrow(/URL/i);
+    });
+
+    it("rejects a malformed URL", async () => {
+      await expect(
+        sendInteractiveCtaUrl({ ...CTA, url: "not a url" }),
+      ).rejects.toThrow(/valid URL/i);
+    });
+
+    it("rejects non-web protocols Meta will not open", async () => {
+      await expect(
+        sendInteractiveCtaUrl({ ...CTA, url: "mailto:a@b.com" }),
+      ).rejects.toThrow(/https?:\/\//i);
+      await expect(
+        sendInteractiveCtaUrl({ ...CTA, url: "javascript:alert(1)" }),
+      ).rejects.toThrow(/https?:\/\//i);
+    });
+  });
+
+  it("sends Meta's cta_url wire format", async () => {
+    let captured: { url: string; body: Record<string, unknown> } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, body: JSON.parse(String(init.body)) };
+        return new Response(
+          JSON.stringify({ messages: [{ id: "wamid.CTA" }] }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const result = await sendInteractiveCtaUrl({
+      ...CTA,
+      headerText: "Special offer",
+      footerText: "Limited time",
+    });
+
+    expect(result).toEqual({ messageId: "wamid.CTA" });
+    expect(captured!.url).toContain("test-phone/messages");
+    expect(captured!.body).toMatchObject({
+      messaging_product: "whatsapp",
+      to: "1234567890",
+      type: "interactive",
+      interactive: {
+        type: "cta_url",
+        body: { text: "Body text" },
+        header: { type: "text", text: "Special offer" },
+        footer: { text: "Limited time" },
+        action: {
+          name: "cta_url",
+          parameters: {
+            display_text: "Visit Website",
+            url: "https://example.com/offer",
+          },
+        },
+      },
+    });
+    vi.unstubAllGlobals();
   });
 });

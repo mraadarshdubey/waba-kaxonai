@@ -1,6 +1,7 @@
 import {
   sendInteractiveButtons,
   sendInteractiveList,
+  sendInteractiveCtaUrl,
   sendMediaMessage,
   sendTextMessage,
   type InteractiveButton,
@@ -317,9 +318,34 @@ export async function engineSendInteractiveList(
   return sendInteractiveViaMeta({ ...args, kind: 'list' })
 }
 
+interface SendInteractiveCtaUrlEngineArgs {
+  accountId: string
+  userId: string
+  conversationId: string
+  contactId: string
+  bodyText: string
+  displayText: string
+  url: string
+  headerText?: string
+  footerText?: string
+}
+
+/**
+ * Send a link-button (CTA URL) message from the engine — body text plus
+ * one button that opens a URL. Session-only (24-hour window), no
+ * template approval needed. Nothing comes back on tap, so unlike
+ * buttons/list this never drives a flow branch.
+ */
+export async function engineSendInteractiveCtaUrl(
+  args: SendInteractiveCtaUrlEngineArgs,
+): Promise<{ whatsapp_message_id: string }> {
+  return sendInteractiveViaMeta({ ...args, kind: 'cta_url' })
+}
+
 type SendInput =
   | (SendInteractiveButtonsEngineArgs & { kind: 'buttons' })
   | (SendInteractiveListEngineArgs & { kind: 'list' })
+  | (SendInteractiveCtaUrlEngineArgs & { kind: 'cta_url' })
 
 async function sendInteractiveViaMeta(
   input: SendInput,
@@ -363,6 +389,19 @@ async function sendInteractiveViaMeta(
         to: phone,
         bodyText: input.bodyText,
         buttons: input.buttons,
+        headerText: input.headerText,
+        footerText: input.footerText,
+      })
+      return r.messageId
+    }
+    if (input.kind === 'cta_url') {
+      const r = await sendInteractiveCtaUrl({
+        phoneNumberId: config.phone_number_id,
+        accessToken,
+        to: phone,
+        bodyText: input.bodyText,
+        displayText: input.displayText,
+        url: input.url,
         headerText: input.headerText,
         footerText: input.footerText,
       })
@@ -426,14 +465,23 @@ async function sendInteractiveViaMeta(
           footer: input.footerText,
           buttons: input.buttons,
         }
-      : {
-          kind: 'list',
-          body: input.bodyText,
-          header: input.headerText,
-          footer: input.footerText,
-          button_label: input.buttonLabel,
-          sections: input.sections,
-        }
+      : input.kind === 'cta_url'
+        ? {
+            kind: 'cta_url',
+            body: input.bodyText,
+            header: input.headerText,
+            footer: input.footerText,
+            display_text: input.displayText,
+            url: input.url,
+          }
+        : {
+            kind: 'list',
+            body: input.bodyText,
+            header: input.headerText,
+            footer: input.footerText,
+            button_label: input.buttonLabel,
+            sections: input.sections,
+          }
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,

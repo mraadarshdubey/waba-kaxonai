@@ -965,6 +965,111 @@ export async function sendInteractiveList(
   return { messageId: data.messages[0].id }
 }
 
+export interface SendInteractiveCtaUrlArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  /** The body text — what the customer reads above the button. */
+  bodyText: string
+  /** Visible label on the button (≤ 20 chars per Meta). */
+  displayText: string
+  /** Destination opened when the customer taps. Must be http(s). */
+  url: string
+  /** Optional plain-text header (≤ 60 chars). */
+  headerText?: string
+  /** Optional grey footer line under the button (≤ 60 chars). */
+  footerText?: string
+  /** Meta's message_id of the message being replied to (quote preview). */
+  contextMessageId?: string
+}
+
+/**
+ * Send a call-to-action message: body text plus a single button that
+ * opens a URL in the customer's browser.
+ *
+ * Unlike a template URL button this needs no Meta approval, but it is a
+ * *session* message — it only delivers inside the 24-hour customer
+ * service window. Outside that window use an approved template with a
+ * URL button instead.
+ *
+ * Nothing comes back on tap: `cta_url` opens a link rather than sending
+ * a reply, so (unlike reply buttons / list rows) there is no webhook
+ * echo and no id to match.
+ */
+export async function sendInteractiveCtaUrl(
+  args: SendInteractiveCtaUrlArgs
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId, accessToken, to,
+    bodyText, displayText, url, headerText, footerText, contextMessageId,
+  } = args
+  validateInteractiveBody(bodyText)
+  validateInteractiveHeaderFooter(headerText, footerText)
+  validateCtaUrlAction(displayText, url)
+
+  const interactive: Record<string, unknown> = {
+    type: 'cta_url',
+    body: { text: bodyText },
+    action: {
+      name: 'cta_url',
+      parameters: { display_text: displayText, url },
+    },
+  }
+  if (headerText) interactive.header = { type: 'text', text: headerText }
+  if (footerText) interactive.footer = { text: footerText }
+
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive,
+  }
+  if (contextMessageId) body.context = { message_id: contextMessageId }
+
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
+/**
+ * Shared CTA-action checks. Exported so the pre-flight validator in
+ * `interactive.ts` and this sender can never drift — a payload the UI
+ * accepts must be one Meta accepts.
+ */
+export function validateCtaUrlAction(displayText: string, url: string): void {
+  if (!displayText || !displayText.trim()) {
+    throw new Error('CTA button needs a label.')
+  }
+  if (displayText.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
+    throw new Error(
+      `CTA button label exceeds ${INTERACTIVE_LIMITS.buttonTitleMaxLength} chars.`
+    )
+  }
+  if (!url || !url.trim()) throw new Error('CTA button needs a URL.')
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error('CTA button URL is not a valid URL.')
+  }
+  // Meta only opens web links from a CTA button; anything else (mailto:,
+  // tel:, javascript:) is rejected upstream, so fail early and clearly.
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('CTA button URL must start with https:// or http://.')
+  }
+}
+
 function validateInteractiveBody(bodyText: string): void {
   if (!bodyText) throw new Error('Interactive message requires bodyText.')
   if (bodyText.length > INTERACTIVE_LIMITS.bodyMaxLength) {

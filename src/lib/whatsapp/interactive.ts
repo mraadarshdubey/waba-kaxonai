@@ -21,7 +21,7 @@
 // mid-conversation.
 // ============================================================
 
-import { INTERACTIVE_LIMITS } from './meta-api'
+import { INTERACTIVE_LIMITS, validateCtaUrlAction } from './meta-api'
 
 export interface InteractiveButton {
   /** Stable id echoed back in the webhook when tapped. */
@@ -68,9 +68,21 @@ export interface InteractiveListPayload {
   sections: InteractiveListSection[]
 }
 
+export interface InteractiveCtaUrlPayload {
+  kind: 'cta_url'
+  body: string
+  header?: string
+  footer?: string
+  /** Visible label on the button (≤ 20 chars). */
+  display_text: string
+  /** Destination opened on tap. http(s) only. */
+  url: string
+}
+
 export type InteractiveMessagePayload =
   | InteractiveButtonsPayload
   | InteractiveListPayload
+  | InteractiveCtaUrlPayload
 
 export type InteractiveValidation =
   | { ok: true }
@@ -223,7 +235,19 @@ export function validateInteractivePayload(
     return ok()
   }
 
-  return fail('Interactive message must be reply buttons or a list.')
+  if (p.kind === 'cta_url') {
+    const cta = p as InteractiveCtaUrlPayload
+    // Delegates to the same checks the Meta sender runs, so a payload
+    // the composer accepts can never be rejected at send time.
+    try {
+      validateCtaUrlAction(cta.display_text, cta.url)
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : 'Invalid CTA button.')
+    }
+    return ok()
+  }
+
+  return fail('Interactive message must be reply buttons, a list, or a CTA button.')
 }
 
 /**
@@ -235,5 +259,7 @@ export function interactivePayloadPreviewText(
 ): string {
   const body = payload.body?.trim()
   if (body) return body
-  return payload.kind === 'buttons' ? '[buttons]' : '[list]'
+  if (payload.kind === 'buttons') return '[buttons]'
+  if (payload.kind === 'cta_url') return '[link button]'
+  return '[list]'
 }

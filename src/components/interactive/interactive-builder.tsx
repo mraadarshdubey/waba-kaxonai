@@ -12,6 +12,7 @@ import { INTERACTIVE_LIMITS } from "@/lib/whatsapp/meta-api";
 import {
   validateInteractivePayload,
   type InteractiveButtonsPayload,
+  type InteractiveCtaUrlPayload,
   type InteractiveListPayload,
   type InteractiveMessagePayload,
 } from "@/lib/whatsapp/interactive";
@@ -52,6 +53,15 @@ export function blankListPayload(): InteractiveListPayload {
   };
 }
 
+export function blankCtaUrlPayload(): InteractiveCtaUrlPayload {
+  return {
+    kind: "cta_url",
+    body: "",
+    display_text: "Visit Website",
+    url: "https://",
+  };
+}
+
 interface InteractiveBuilderProps {
   value: InteractiveMessagePayload;
   onChange: (payload: InteractiveMessagePayload) => void;
@@ -77,14 +87,16 @@ export function InteractiveBuilder({
   const setField = (patch: Partial<InteractiveMessagePayload>) =>
     onChange({ ...value, ...patch } as InteractiveMessagePayload);
 
-  const switchKind = (kind: "buttons" | "list") => {
+  const switchKind = (kind: InteractiveMessagePayload["kind"]) => {
     if (kind === value.kind) return;
     const shared = { body: value.body, header: value.header, footer: value.footer };
-    onChange(
+    const blank =
       kind === "buttons"
-        ? { ...blankButtonsPayload(), ...shared }
-        : { ...blankListPayload(), ...shared },
-    );
+        ? blankButtonsPayload()
+        : kind === "cta_url"
+          ? blankCtaUrlPayload()
+          : blankListPayload();
+    onChange({ ...blank, ...shared });
   };
 
   return (
@@ -101,6 +113,11 @@ export function InteractiveBuilder({
             active={value.kind === "list"}
             label="List"
             onClick={() => switchKind("list")}
+          />
+          <KindButton
+            active={value.kind === "cta_url"}
+            label="Link button"
+            onClick={() => switchKind("cta_url")}
           />
         </div>
 
@@ -141,19 +158,26 @@ export function InteractiveBuilder({
 
         {value.kind === "buttons" ? (
           <ButtonsEditor value={value} onChange={onChange} advanced={advanced} />
+        ) : value.kind === "cta_url" ? (
+          <CtaUrlEditor value={value} onChange={onChange} />
         ) : (
           <ListEditor value={value} onChange={onChange} advanced={advanced} />
         )}
 
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={advanced}
-            onChange={(e) => setAdvanced(e.target.checked)}
-            className="h-3.5 w-3.5 accent-primary"
-          />
-          Show reply IDs (advanced)
-        </label>
+        {/* Reply IDs only exist for taps that come back to us — a link
+            button opens a URL and echoes nothing, so the toggle would
+            control nothing there. */}
+        {value.kind !== "cta_url" && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={advanced}
+              onChange={(e) => setAdvanced(e.target.checked)}
+              className="h-3.5 w-3.5 accent-primary"
+            />
+            Show reply IDs (advanced)
+          </label>
+        )}
 
         {!validation.ok && (
           <p className="text-xs text-red-400">{validation.error}</p>
@@ -252,6 +276,57 @@ function ButtonsEditor({
           Add button
         </Button>
       )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+// Link-button (CTA URL) editor
+// ------------------------------------------------------------
+
+/**
+ * A link button carries no reply id — tapping it opens the URL in the
+ * customer's browser and nothing comes back to us. So this editor only
+ * needs the visible label and the destination.
+ */
+function CtaUrlEditor({
+  value,
+  onChange,
+}: {
+  value: InteractiveCtaUrlPayload;
+  onChange: (p: InteractiveMessagePayload) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label="Button label"
+          counter={`${value.display_text.length}/${INTERACTIVE_LIMITS.buttonTitleMaxLength}`}
+        >
+          <Input
+            value={value.display_text}
+            maxLength={INTERACTIVE_LIMITS.buttonTitleMaxLength}
+            onChange={(e) => onChange({ ...value, display_text: e.target.value })}
+            placeholder="Visit Website"
+            className="bg-muted text-foreground"
+          />
+        </Field>
+        <Field label="Opens this link">
+          <Input
+            type="url"
+            inputMode="url"
+            value={value.url}
+            onChange={(e) => onChange({ ...value, url: e.target.value })}
+            placeholder="https://example.com"
+            className="bg-muted text-foreground"
+          />
+        </Field>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Delivers only inside the 24-hour window since the customer&apos;s last
+        message. To reach people outside it, send an approved template with a
+        URL button instead.
+      </p>
     </div>
   );
 }
